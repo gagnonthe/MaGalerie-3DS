@@ -35,7 +35,7 @@ jobs:
         run: make
 
       - name: Créer les informations du menu HOME
-        run: bannertool makesmdh -s "MaGalerie 3DS" -l "Galerie photo personnelle" -p "gagnonthe" -o MaGalerie-3DS.smdh
+      run: bannertool makesmdh -s "MaGalerie 3DS" -l "Galerie photo personnelle" -p "gagnonthe" -i icon.png -o MaGalerie-3DS.smdh
 
       - name: Créer le CIA
         run: |
