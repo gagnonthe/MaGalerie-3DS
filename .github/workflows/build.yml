@@ -10,27 +10,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    container:
+      image: devkitpro/devkitarm:latest
+
     steps:
       - name: Télécharger le dépôt
         uses: actions/checkout@v4
-
-      - name: Installer devkitPro
-        run: |
-          sudo apt update
-          sudo apt install -y wget gnupg
-          wget https://apt.devkitpro.org/install-devkitpro-pacman
-          chmod +x install-devkitpro-pacman
-          sudo ./install-devkitpro-pacman
-
-      - name: Installer les outils 3DS
-        run: |
-          sudo dkp-pacman -Syu --noconfirm
-          sudo dkp-pacman -S --noconfirm devkitARM libctru 3ds-dev
-
-      - name: Configurer l'environnement
-        run: |
-          echo "DEVKITPRO=/opt/devkitpro" >> $GITHUB_ENV
-          echo "DEVKITARM=/opt/devkitpro/devkitARM" >> $GITHUB_ENV
 
       - name: Compiler
         run: make
@@ -40,6 +25,6 @@ jobs:
         with:
           name: MaGalerie-3DS
           path: |
-            *.3dsx
-            *.smdh
-            *.elf
+            MaGalerie-3DS.3dsx
+            MaGalerie-3DS.elf
+            MaGalerie-3DS.smdh
