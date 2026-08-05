@@ -1,0 +1,46 @@
+BasicInfo:
+  Title                   : "MaGalerie-3DS"
+  CompanyCode             : "00"
+  ProductCode             : "CTR-P-MGAL"
+  ContentType             : Application
+  Logo                    : Homebrew
+
+TitleInfo:
+  UniqueId                : 0xF7A11
+  Category                : Application
+
+Option:
+  UseOnSD                 : true
+  EnableCompress          : true
+  FreeProductCode         : true
+
+ExeFs:
+  ReadOnly:
+    - .rodata
+  ReadWrite:
+    - .data
+  Text:
+    - .text
+
+AccessControlInfo:
+  CoreVersion             : 2
+  DescVersion             : 2
+  SystemMode              : 64MB
+  IdealProcessor          : 0
+  AffinityMask            : 1
+  Priority                : 0x30
+  MemoryType              : Application
+
+  FileSystemAccess:
+    - DirectSdmc
+
+  ServiceAccessControl:
+    - APT:U
+    - ac:u
+    - cfg:u
+    - fs:USER
+    - gsp::Gpu
+    - hid:USER
+    - ndm:u
+    - ptm:u
+    - soc:U
