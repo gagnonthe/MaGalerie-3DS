@@ -110,7 +110,6 @@ $(OUTPUT).cia: $(OUTPUT).elf $(OUTPUT).smdh
 	@$(MAKEROM) \
 		-f cia \
 		-target t \
-		-exefslogo \
 		-o "$(OUTPUT).cia" \
 		-elf "$(OUTPUT).elf" \
 		-rsf "$(TOPDIR)/$(RSF_FILE)" \
