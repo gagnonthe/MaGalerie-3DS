@@ -17,43 +17,13 @@ jobs:
       - name: Télécharger le dépôt
         uses: actions/checkout@v4
 
-      - name: Installer les outils CIA
-        run: |
-          apt-get update
-          apt-get install -y wget unzip
-
-          wget -q https://github.com/diasurgical/bannertool/releases/download/1.2.0/bannertool.zip
-          unzip -j bannertool.zip linux-x86_64/bannertool -d /opt/devkitpro/tools/bin
-
-          wget -q https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.18.3/makerom-v0.18.3-ubuntu_x86_64.zip
-          unzip -j makerom-v0.18.3-ubuntu_x86_64.zip makerom -d /opt/devkitpro/tools/bin
-
-          chmod +x /opt/devkitpro/tools/bin/bannertool
-          chmod +x /opt/devkitpro/tools/bin/makerom
-
-      - name: Compiler le 3DSX
+      - name: Compiler
         run: make
 
-      - name: Créer les informations du menu HOME
-        run: bannertool makesmdh -s "MaGalerie 3DS" -l "Galerie photo personnelle" -p "gagnonthe" -i icon.png -o MaGalerie-3DS.smdh
-
-      - name: Créer le CIA
-        run: |
-          makerom \
-            -f cia \
-            -o MaGalerie-3DS.cia \
-            -rsf cia.rsf \
-            -target t \
-            -exefslogo \
-            -elf MaGalerie-3DS.elf \
-            -icon MaGalerie-3DS.smdh
-
-      - name: Publier les fichiers compilés
+      - name: Publier l'artefact
         uses: actions/upload-artifact@v4
         with:
           name: MaGalerie-3DS
           path: |
             MaGalerie-3DS.3dsx
-            MaGalerie-3DS.cia
-            MaGalerie-3DS.smdh
             MaGalerie-3DS.elf
