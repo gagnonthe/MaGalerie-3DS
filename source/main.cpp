@@ -1,5 +1,6 @@
 #include <3ds.h>
 #include <citro2d.h>
+#include <tex3ds.h>
 
 #include <algorithm>
 #include <cctype>
@@ -34,7 +35,7 @@ struct Bitmap {
 
 struct Texture {
     C3D_Tex tex{};
-    C2D_SubTex sub{};
+    Tex3DS_SubTexture sub{};
     C2D_Image img{};
     int w=0,h=0;
     bool ready=false;
