@@ -308,10 +308,10 @@ int main() {
 
             needsDraw = false;
         } else {
-            // Attendre la prochaine image sans changer inutilement
-            // de framebuffer, ce qui évite le clignotement.
+            // Attendre sans changer inutilement de framebuffer.
             gspWaitForVBlank();
         }
+    }
 
     gfxExit();
     return 0;
