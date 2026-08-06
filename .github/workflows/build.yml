@@ -1,4 +1,4 @@
-name: Compiler MaGalerie-3DS
+name: Compiler MaGalerie-3DS 2.0
 
 on:
   push:
@@ -14,7 +14,7 @@ jobs:
       image: devkitpro/devkitarm:latest
 
     steps:
-      - name: Télécharger le dépôt
+      - name: Récupérer le dépôt
         uses: actions/checkout@v4
 
       - name: Installer les outils CIA
@@ -40,7 +40,7 @@ jobs:
       - name: Publier les fichiers compilés
         uses: actions/upload-artifact@v4
         with:
-          name: MaGalerie-3DS
+          name: MaGalerie-3DS-2.0-beta
           path: |
             MaGalerie-3DS.3dsx
             MaGalerie-3DS.cia

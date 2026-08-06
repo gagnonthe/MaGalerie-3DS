@@ -28,17 +28,15 @@ CFLAGS      += $(INCLUDE) -D__3DS__
 CXXFLAGS    := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
 ASFLAGS     := -g $(ARCH)
 LDFLAGS     := -specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
-LIBS        := -lctru -lm
+LIBS        := -lcitro2d -lcitro3d -lctru -lm
 LIBDIRS     := $(CTRULIB)
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 
 export OUTPUT := $(CURDIR)/$(TARGET)
 export TOPDIR := $(CURDIR)
-
 export VPATH := $(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
                 $(foreach dir,$(DATA),$(CURDIR)/$(dir))
-
 export DEPSDIR := $(CURDIR)/$(BUILD)
 
 CFILES   := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
@@ -47,17 +45,14 @@ SFILES   := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 BINFILES := $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 
 export LD := $(CXX)
-
 export OFILES_BIN := $(addsuffix .o,$(BINFILES))
 export OFILES_SRC := $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
 export OFILES := $(OFILES_BIN) $(OFILES_SRC)
-
 export HFILES_BIN := $(addsuffix .h,$(subst .,_,$(BINFILES)))
 
 export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
                   $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
                   -I$(CURDIR)/$(BUILD)
-
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
 export APP_ICON := $(CURDIR)/$(ICON)
@@ -76,19 +71,14 @@ $(BUILD):
 	@mkdir -p $@
 
 clean:
-	@echo Nettoyage...
 	@rm -fr $(BUILD)
-	@rm -f $(TARGET).3dsx
-	@rm -f $(TARGET).elf
-	@rm -f $(TARGET).smdh
-	@rm -f $(TARGET).cia
+	@rm -f $(TARGET).3dsx $(TARGET).elf $(TARGET).smdh $(TARGET).cia
 
 else
 
 DEPENDS := $(OFILES:.o=.d)
 
 .PHONY: all cia
-
 all: $(OUTPUT).3dsx
 
 $(OUTPUT).elf: $(OFILES)
@@ -106,16 +96,14 @@ $(OUTPUT).3dsx: $(OUTPUT).elf $(OUTPUT).smdh
 cia: $(OUTPUT).cia
 
 $(OUTPUT).cia: $(OUTPUT).elf $(OUTPUT).smdh
-	@echo Creation du CIA...
 	@$(MAKEROM) \
-		-exefslogo \
 		-f cia \
 		-target t \
+		-exefslogo \
 		-o "$(OUTPUT).cia" \
 		-elf "$(OUTPUT).elf" \
 		-rsf "$(TOPDIR)/$(RSF_FILE)" \
 		-icon "$(OUTPUT).smdh"
 
 -include $(DEPENDS)
-
 endif
