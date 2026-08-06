@@ -298,16 +298,20 @@ int main() {
             needsDraw = true;
         }
 
-        if (needsDraw) {
+            if (needsDraw) {
             drawImage(image, zoom);
             printBottom(files, index, status, zoom);
-            needsDraw = false;
-        }
 
-        gfxFlushBuffers();
-        gfxSwapBuffers();
-        gspWaitForVBlank();
-    }
+            gfxFlushBuffers();
+            gfxSwapBuffers();
+            gspWaitForVBlank();
+
+            needsDraw = false;
+        } else {
+            // Attendre la prochaine image sans changer inutilement
+            // de framebuffer, ce qui évite le clignotement.
+            gspWaitForVBlank();
+        }
 
     gfxExit();
     return 0;
