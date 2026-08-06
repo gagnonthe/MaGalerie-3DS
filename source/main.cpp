@@ -6,313 +6,1392 @@
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
+#include <limits>
 #include <string>
 #include <vector>
 
 namespace {
-constexpr int SCREEN_W = 400;
-constexpr int SCREEN_H = 240;
-constexpr const char* PHOTO_DIR = "sdmc:/3ds/MaGalerie/photos";
+
+constexpr int TOP_WIDTH = 400;
+constexpr int TOP_HEIGHT = 240;
+
+constexpr int GRID_COLUMNS = 4;
+constexpr int GRID_ROWS = 3;
+constexpr int PHOTOS_PER_PAGE = GRID_COLUMNS * GRID_ROWS;
+
+constexpr int CELL_WIDTH = 92;
+constexpr int CELL_HEIGHT = 66;
+constexpr int CELL_GAP_X = 5;
+constexpr int CELL_GAP_Y = 7;
+constexpr int GRID_START_X = 6;
+constexpr int GRID_START_Y = 8;
+
+constexpr int THUMB_WIDTH = 84;
+constexpr int THUMB_HEIGHT = 54;
+
+constexpr const char* PHOTO_DIRECTORY =
+    "sdmc:/3ds/MaGalerie/photos";
+
+enum class ScreenMode {
+    Grid,
+    Viewer
+};
 
 struct Image {
     int width = 0;
     int height = 0;
-    std::vector<u8> rgb; // RGB, ligne par ligne depuis le haut
+    std::vector<u8> rgb;
+
+    bool valid() const {
+        return width > 0 && height > 0 && !rgb.empty();
+    }
 };
 
-u16 readU16(FILE* f) {
-    u8 b[2]{};
-    if (fread(b, 1, 2, f) != 2) return 0;
-    return static_cast<u16>(b[0] | (b[1] << 8));
+u16 readU16(FILE* file) {
+    u8 bytes[2]{};
+
+    if (fread(bytes, 1, 2, file) != 2) {
+        return 0;
+    }
+
+    return static_cast<u16>(
+        bytes[0] |
+        (static_cast<u16>(bytes[1]) << 8)
+    );
 }
 
-u32 readU32(FILE* f) {
-    u8 b[4]{};
-    if (fread(b, 1, 4, f) != 4) return 0;
-    return static_cast<u32>(b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24));
+u32 readU32(FILE* file) {
+    u8 bytes[4]{};
+
+    if (fread(bytes, 1, 4, file) != 4) {
+        return 0;
+    }
+
+    return static_cast<u32>(
+        bytes[0] |
+        (static_cast<u32>(bytes[1]) << 8) |
+        (static_cast<u32>(bytes[2]) << 16) |
+        (static_cast<u32>(bytes[3]) << 24)
+    );
 }
 
-s32 readS32(FILE* f) {
-    return static_cast<s32>(readU32(f));
+s32 readS32(FILE* file) {
+    return static_cast<s32>(readU32(file));
 }
 
-bool endsWithBmp(const std::string& name) {
-    if (name.size() < 4) return false;
-    std::string ext = name.substr(name.size() - 4);
-    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return ext == ".bmp";
+bool endsWithBmp(const std::string& filename) {
+    if (filename.size() < 4) {
+        return false;
+    }
+
+    std::string extension =
+        filename.substr(filename.size() - 4);
+
+    std::transform(
+        extension.begin(),
+        extension.end(),
+        extension.begin(),
+        [](unsigned char character) {
+            return static_cast<char>(
+                std::tolower(character)
+            );
+        }
+    );
+
+    return extension == ".bmp";
+}
+
+std::string baseName(const std::string& path) {
+    const std::size_t slash =
+        path.find_last_of("/\\");
+
+    if (slash == std::string::npos) {
+        return path;
+    }
+
+    return path.substr(slash + 1);
 }
 
 std::vector<std::string> listPhotos() {
     std::vector<std::string> files;
-    DIR* dir = opendir(PHOTO_DIR);
-    if (!dir) return files;
 
-    while (dirent* entry = readdir(dir)) {
-        const std::string name = entry->d_name;
-        if (name == "." || name == ".." || !endsWithBmp(name)) continue;
-        files.push_back(std::string(PHOTO_DIR) + "/" + name);
+    DIR* directory = opendir(PHOTO_DIRECTORY);
+
+    if (!directory) {
+        return files;
     }
-    closedir(dir);
+
+    while (dirent* entry = readdir(directory)) {
+        const std::string filename = entry->d_name;
+
+        if (
+            filename == "." ||
+            filename == ".." ||
+            !endsWithBmp(filename)
+        ) {
+            continue;
+        }
+
+        files.push_back(
+            std::string(PHOTO_DIRECTORY) +
+            "/" +
+            filename
+        );
+    }
+
+    closedir(directory);
 
     std::sort(files.begin(), files.end());
+
     return files;
 }
 
-std::string baseName(const std::string& path) {
-    const std::size_t pos = path.find_last_of("/\\");
-    return pos == std::string::npos ? path : path.substr(pos + 1);
-}
+bool loadBmp(
+    const std::string& path,
+    Image& output,
+    std::string& error
+) {
+    FILE* file = fopen(path.c_str(), "rb");
 
-bool loadBmp(const std::string& path, Image& out, std::string& error) {
-    FILE* f = fopen(path.c_str(), "rb");
-    if (!f) {
-        error = "Impossible d'ouvrir le fichier";
+    if (!file) {
+        error = "Impossible d'ouvrir la photo.";
         return false;
     }
 
-    const u16 signature = readU16(f);
+    const u16 signature = readU16(file);
+
     if (signature != 0x4D42) {
-        fclose(f);
-        error = "Ce fichier n'est pas un BMP";
+        fclose(file);
+        error = "Le fichier n'est pas un BMP.";
         return false;
     }
 
-    (void)readU32(f); // taille du fichier
-    (void)readU16(f);
-    (void)readU16(f);
-    const u32 pixelOffset = readU32(f);
-    const u32 dibSize = readU32(f);
+    (void)readU32(file);
+    (void)readU16(file);
+    (void)readU16(file);
+
+    const u32 pixelOffset = readU32(file);
+    const u32 dibSize = readU32(file);
+
     if (dibSize < 40) {
-        fclose(f);
-        error = "Format BMP trop ancien";
+        fclose(file);
+        error = "Format BMP non compatible.";
         return false;
     }
 
-    const s32 width = readS32(f);
-    const s32 signedHeight = readS32(f);
-    const u16 planes = readU16(f);
-    const u16 bitsPerPixel = readU16(f);
-    const u32 compression = readU32(f);
+    const s32 width = readS32(file);
+    const s32 signedHeight = readS32(file);
+    const u16 planes = readU16(file);
+    const u16 bitsPerPixel = readU16(file);
+    const u32 compression = readU32(file);
 
-    if (width <= 0 || signedHeight == 0 || planes != 1) {
-        fclose(f);
-        error = "Dimensions BMP invalides";
+    if (
+        width <= 0 ||
+        signedHeight == 0 ||
+        planes != 1
+    ) {
+        fclose(file);
+        error = "Dimensions BMP invalides.";
         return false;
     }
-    if ((bitsPerPixel != 24 && bitsPerPixel != 32) || compression != 0) {
-        fclose(f);
-        error = "Utilise un BMP 24 ou 32 bits non compresse";
+
+    if (
+        (bitsPerPixel != 24 &&
+         bitsPerPixel != 32) ||
+        compression != 0
+    ) {
+        fclose(file);
+        error =
+            "BMP 24/32 bits non compresse requis.";
         return false;
     }
 
     const bool topDown = signedHeight < 0;
-    const int height = signedHeight < 0 ? -signedHeight : signedHeight;
-    const int bytesPerPixel = bitsPerPixel / 8;
-    const std::size_t rowSize = ((static_cast<std::size_t>(width) * bitsPerPixel + 31) / 32) * 4;
+
+    const int height =
+        signedHeight < 0
+            ? -signedHeight
+            : signedHeight;
 
     if (width > 8192 || height > 8192) {
-        fclose(f);
-        error = "Image trop grande";
+        fclose(file);
+        error = "Cette image est trop grande.";
         return false;
     }
+
+    const int bytesPerPixel =
+        bitsPerPixel / 8;
+
+    const std::size_t rowSize =
+        (
+            static_cast<std::size_t>(width) *
+            bitsPerPixel +
+            31
+        ) /
+        32 *
+        4;
 
     std::vector<u8> row(rowSize);
-    std::vector<u8> rgb(static_cast<std::size_t>(width) * height * 3);
 
-    if (fseek(f, static_cast<long>(pixelOffset), SEEK_SET) != 0) {
-        fclose(f);
-        error = "BMP endommage";
+    std::vector<u8> pixels(
+        static_cast<std::size_t>(width) *
+        height *
+        3
+    );
+
+    if (
+        fseek(
+            file,
+            static_cast<long>(pixelOffset),
+            SEEK_SET
+        ) != 0
+    ) {
+        fclose(file);
+        error = "Le fichier BMP est endommage.";
         return false;
     }
 
-    for (int sourceRow = 0; sourceRow < height; ++sourceRow) {
-        if (fread(row.data(), 1, rowSize, f) != rowSize) {
-            fclose(f);
-            error = "Lecture BMP incomplete";
+    for (
+        int sourceRow = 0;
+        sourceRow < height;
+        ++sourceRow
+    ) {
+        if (
+            fread(
+                row.data(),
+                1,
+                rowSize,
+                file
+            ) != rowSize
+        ) {
+            fclose(file);
+            error = "Lecture BMP incomplete.";
             return false;
         }
 
-        const int y = topDown ? sourceRow : (height - 1 - sourceRow);
+        const int destinationY =
+            topDown
+                ? sourceRow
+                : height - 1 - sourceRow;
+
         for (int x = 0; x < width; ++x) {
-            const std::size_t src = static_cast<std::size_t>(x) * bytesPerPixel;
-            const std::size_t dst = (static_cast<std::size_t>(y) * width + x) * 3;
-            rgb[dst + 0] = row[src + 2];
-            rgb[dst + 1] = row[src + 1];
-            rgb[dst + 2] = row[src + 0];
+            const std::size_t source =
+                static_cast<std::size_t>(x) *
+                bytesPerPixel;
+
+            const std::size_t destination =
+                (
+                    static_cast<std::size_t>(
+                        destinationY
+                    ) *
+                    width +
+                    x
+                ) *
+                3;
+
+            pixels[destination + 0] =
+                row[source + 2];
+
+            pixels[destination + 1] =
+                row[source + 1];
+
+            pixels[destination + 2] =
+                row[source + 0];
         }
     }
 
-    fclose(f);
-    out.width = width;
-    out.height = height;
-    out.rgb = std::move(rgb);
+    fclose(file);
+
+    output.width = width;
+    output.height = height;
+    output.rgb = std::move(pixels);
+
     return true;
 }
 
-void setPixel(u8* fb, int x, int y, u8 r, u8 g, u8 b) {
-    if (x < 0 || x >= SCREEN_W || y < 0 || y >= SCREEN_H) return;
-    // L'ecran 3DS est stocke tourne, en BGR8.
-    const int index = 3 * (x * SCREEN_H + (SCREEN_H - 1 - y));
-    fb[index + 0] = b;
-    fb[index + 1] = g;
-    fb[index + 2] = r;
+Image createThumbnail(
+    const Image& source,
+    int maximumWidth,
+    int maximumHeight
+) {
+    Image thumbnail;
+
+    if (!source.valid()) {
+        return thumbnail;
+    }
+
+    const float scaleX =
+        static_cast<float>(maximumWidth) /
+        source.width;
+
+    const float scaleY =
+        static_cast<float>(maximumHeight) /
+        source.height;
+
+    const float scale =
+        std::min(scaleX, scaleY);
+
+    thumbnail.width = std::max(
+        1,
+        static_cast<int>(
+            source.width * scale
+        )
+    );
+
+    thumbnail.height = std::max(
+        1,
+        static_cast<int>(
+            source.height * scale
+        )
+    );
+
+    thumbnail.rgb.resize(
+        static_cast<std::size_t>(
+            thumbnail.width
+        ) *
+        thumbnail.height *
+        3
+    );
+
+    for (
+        int destinationY = 0;
+        destinationY < thumbnail.height;
+        ++destinationY
+    ) {
+        const int sourceY = std::clamp(
+            static_cast<int>(
+                destinationY / scale
+            ),
+            0,
+            source.height - 1
+        );
+
+        for (
+            int destinationX = 0;
+            destinationX < thumbnail.width;
+            ++destinationX
+        ) {
+            const int sourceX = std::clamp(
+                static_cast<int>(
+                    destinationX / scale
+                ),
+                0,
+                source.width - 1
+            );
+
+            const std::size_t sourceIndex =
+                (
+                    static_cast<std::size_t>(
+                        sourceY
+                    ) *
+                    source.width +
+                    sourceX
+                ) *
+                3;
+
+            const std::size_t destinationIndex =
+                (
+                    static_cast<std::size_t>(
+                        destinationY
+                    ) *
+                    thumbnail.width +
+                    destinationX
+                ) *
+                3;
+
+            thumbnail.rgb[
+                destinationIndex + 0
+            ] = source.rgb[sourceIndex + 0];
+
+            thumbnail.rgb[
+                destinationIndex + 1
+            ] = source.rgb[sourceIndex + 1];
+
+            thumbnail.rgb[
+                destinationIndex + 2
+            ] = source.rgb[sourceIndex + 2];
+        }
+    }
+
+    return thumbnail;
 }
 
-void clearTop(u8 r = 0, u8 g = 0, u8 b = 0) {
-    u16 fbWidth = 0;
-    u16 fbHeight = 0;
-    u8* fb = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, &fbWidth, &fbHeight);
-    (void)fbWidth;
-    (void)fbHeight;
-    for (int x = 0; x < SCREEN_W; ++x) {
-        for (int y = 0; y < SCREEN_H; ++y) {
-            setPixel(fb, x, y, r, g, b);
+void setTopPixel(
+    u8* framebuffer,
+    int x,
+    int y,
+    u8 red,
+    u8 green,
+    u8 blue
+) {
+    if (
+        x < 0 ||
+        x >= TOP_WIDTH ||
+        y < 0 ||
+        y >= TOP_HEIGHT
+    ) {
+        return;
+    }
+
+    const int index =
+        3 *
+        (
+            x * TOP_HEIGHT +
+            (TOP_HEIGHT - 1 - y)
+        );
+
+    framebuffer[index + 0] = blue;
+    framebuffer[index + 1] = green;
+    framebuffer[index + 2] = red;
+}
+
+void fillRectangle(
+    u8* framebuffer,
+    int x,
+    int y,
+    int width,
+    int height,
+    u8 red,
+    u8 green,
+    u8 blue
+) {
+    for (
+        int currentX = x;
+        currentX < x + width;
+        ++currentX
+    ) {
+        for (
+            int currentY = y;
+            currentY < y + height;
+            ++currentY
+        ) {
+            setTopPixel(
+                framebuffer,
+                currentX,
+                currentY,
+                red,
+                green,
+                blue
+            );
         }
     }
 }
 
-void drawImage(const Image& image, float zoom) {
-    clearTop(12, 12, 16);
-    if (image.width <= 0 || image.height <= 0 || image.rgb.empty()) return;
+void drawRectangleOutline(
+    u8* framebuffer,
+    int x,
+    int y,
+    int width,
+    int height,
+    int thickness,
+    u8 red,
+    u8 green,
+    u8 blue
+) {
+    fillRectangle(
+        framebuffer,
+        x,
+        y,
+        width,
+        thickness,
+        red,
+        green,
+        blue
+    );
 
-    const float fitX = static_cast<float>(SCREEN_W) / image.width;
-    const float fitY = static_cast<float>(SCREEN_H) / image.height;
-    const float scale = std::min(fitX, fitY) * zoom;
+    fillRectangle(
+        framebuffer,
+        x,
+        y + height - thickness,
+        width,
+        thickness,
+        red,
+        green,
+        blue
+    );
 
-    int drawW = std::max(1, static_cast<int>(image.width * scale));
-    int drawH = std::max(1, static_cast<int>(image.height * scale));
-    const int startX = (SCREEN_W - drawW) / 2;
-    const int startY = (SCREEN_H - drawH) / 2;
+    fillRectangle(
+        framebuffer,
+        x,
+        y,
+        thickness,
+        height,
+        red,
+        green,
+        blue
+    );
 
-    u16 fbWidth = 0;
-    u16 fbHeight = 0;
-    u8* fb = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, &fbWidth, &fbHeight);
-    (void)fbWidth;
-    (void)fbHeight;
+    fillRectangle(
+        framebuffer,
+        x + width - thickness,
+        y,
+        thickness,
+        height,
+        red,
+        green,
+        blue
+    );
+}
 
-    for (int dy = 0; dy < drawH; ++dy) {
-        const int screenY = startY + dy;
-        if (screenY < 0 || screenY >= SCREEN_H) continue;
-        const int srcY = std::clamp(static_cast<int>(dy / scale), 0, image.height - 1);
+void clearTop(
+    u8 red = 5,
+    u8 green = 7,
+    u8 blue = 11
+) {
+    u16 framebufferWidth = 0;
+    u16 framebufferHeight = 0;
 
-        for (int dx = 0; dx < drawW; ++dx) {
-            const int screenX = startX + dx;
-            if (screenX < 0 || screenX >= SCREEN_W) continue;
-            const int srcX = std::clamp(static_cast<int>(dx / scale), 0, image.width - 1);
-            const std::size_t p = (static_cast<std::size_t>(srcY) * image.width + srcX) * 3;
-            setPixel(fb, screenX, screenY, image.rgb[p], image.rgb[p + 1], image.rgb[p + 2]);
+    u8* framebuffer = gfxGetFramebuffer(
+        GFX_TOP,
+        GFX_LEFT,
+        &framebufferWidth,
+        &framebufferHeight
+    );
+
+    (void)framebufferWidth;
+    (void)framebufferHeight;
+
+    fillRectangle(
+        framebuffer,
+        0,
+        0,
+        TOP_WIDTH,
+        TOP_HEIGHT,
+        red,
+        green,
+        blue
+    );
+}
+
+void drawImageAt(
+    u8* framebuffer,
+    const Image& image,
+    int x,
+    int y
+) {
+    if (!image.valid()) {
+        return;
+    }
+
+    for (
+        int sourceY = 0;
+        sourceY < image.height;
+        ++sourceY
+    ) {
+        for (
+            int sourceX = 0;
+            sourceX < image.width;
+            ++sourceX
+        ) {
+            const std::size_t pixel =
+                (
+                    static_cast<std::size_t>(
+                        sourceY
+                    ) *
+                    image.width +
+                    sourceX
+                ) *
+                3;
+
+            setTopPixel(
+                framebuffer,
+                x + sourceX,
+                y + sourceY,
+                image.rgb[pixel + 0],
+                image.rgb[pixel + 1],
+                image.rgb[pixel + 2]
+            );
         }
     }
 }
 
-void printBottom(const std::vector<std::string>& files, std::size_t index,
-                 const std::string& status, float zoom) {
+void drawViewerImage(
+    const Image& image,
+    float zoom
+) {
+    clearTop();
+
+    if (!image.valid()) {
+        return;
+    }
+
+    const float fitX =
+        static_cast<float>(TOP_WIDTH) /
+        image.width;
+
+    const float fitY =
+        static_cast<float>(TOP_HEIGHT) /
+        image.height;
+
+    const float scale =
+        std::min(fitX, fitY) * zoom;
+
+    const int drawWidth = std::max(
+        1,
+        static_cast<int>(
+            image.width * scale
+        )
+    );
+
+    const int drawHeight = std::max(
+        1,
+        static_cast<int>(
+            image.height * scale
+        )
+    );
+
+    const int startX =
+        (TOP_WIDTH - drawWidth) / 2;
+
+    const int startY =
+        (TOP_HEIGHT - drawHeight) / 2;
+
+    u16 framebufferWidth = 0;
+    u16 framebufferHeight = 0;
+
+    u8* framebuffer = gfxGetFramebuffer(
+        GFX_TOP,
+        GFX_LEFT,
+        &framebufferWidth,
+        &framebufferHeight
+    );
+
+    (void)framebufferWidth;
+    (void)framebufferHeight;
+
+    for (
+        int destinationY = 0;
+        destinationY < drawHeight;
+        ++destinationY
+    ) {
+        const int screenY =
+            startY + destinationY;
+
+        if (
+            screenY < 0 ||
+            screenY >= TOP_HEIGHT
+        ) {
+            continue;
+        }
+
+        const int sourceY = std::clamp(
+            static_cast<int>(
+                destinationY / scale
+            ),
+            0,
+            image.height - 1
+        );
+
+        for (
+            int destinationX = 0;
+            destinationX < drawWidth;
+            ++destinationX
+        ) {
+            const int screenX =
+                startX + destinationX;
+
+            if (
+                screenX < 0 ||
+                screenX >= TOP_WIDTH
+            ) {
+                continue;
+            }
+
+            const int sourceX = std::clamp(
+                static_cast<int>(
+                    destinationX / scale
+                ),
+                0,
+                image.width - 1
+            );
+
+            const std::size_t pixel =
+                (
+                    static_cast<std::size_t>(
+                        sourceY
+                    ) *
+                    image.width +
+                    sourceX
+                ) *
+                3;
+
+            setTopPixel(
+                framebuffer,
+                screenX,
+                screenY,
+                image.rgb[pixel + 0],
+                image.rgb[pixel + 1],
+                image.rgb[pixel + 2]
+            );
+        }
+    }
+}
+
+void buildThumbnailPage(
+    const std::vector<std::string>& files,
+    std::size_t page,
+    std::vector<Image>& thumbnails,
+    std::string& status
+) {
+    thumbnails.clear();
+
+    const std::size_t pageStart =
+        page * PHOTOS_PER_PAGE;
+
+    const std::size_t pageEnd =
+        std::min(
+            pageStart + PHOTOS_PER_PAGE,
+            files.size()
+        );
+
+    for (
+        std::size_t index = pageStart;
+        index < pageEnd;
+        ++index
+    ) {
+        Image image;
+        std::string error;
+
+        if (loadBmp(files[index], image, error)) {
+            thumbnails.push_back(
+                createThumbnail(
+                    image,
+                    THUMB_WIDTH,
+                    THUMB_HEIGHT
+                )
+            );
+        } else {
+            thumbnails.push_back(Image{});
+            status = error;
+        }
+    }
+}
+
+void drawGrid(
+    const std::vector<std::string>& files,
+    const std::vector<Image>& thumbnails,
+    std::size_t selectedIndex,
+    std::size_t page
+) {
+    clearTop(4, 6, 10);
+
+    u16 framebufferWidth = 0;
+    u16 framebufferHeight = 0;
+
+    u8* framebuffer = gfxGetFramebuffer(
+        GFX_TOP,
+        GFX_LEFT,
+        &framebufferWidth,
+        &framebufferHeight
+    );
+
+    (void)framebufferWidth;
+    (void)framebufferHeight;
+
+    const std::size_t pageStart =
+        page * PHOTOS_PER_PAGE;
+
+    for (
+        int localIndex = 0;
+        localIndex < PHOTOS_PER_PAGE;
+        ++localIndex
+    ) {
+        const int column =
+            localIndex % GRID_COLUMNS;
+
+        const int row =
+            localIndex / GRID_COLUMNS;
+
+        const int cellX =
+            GRID_START_X +
+            column *
+            (CELL_WIDTH + CELL_GAP_X);
+
+        const int cellY =
+            GRID_START_Y +
+            row *
+            (CELL_HEIGHT + CELL_GAP_Y);
+
+        const std::size_t globalIndex =
+            pageStart +
+            static_cast<std::size_t>(
+                localIndex
+            );
+
+        fillRectangle(
+            framebuffer,
+            cellX,
+            cellY,
+            CELL_WIDTH,
+            CELL_HEIGHT,
+            15,
+            19,
+            27
+        );
+
+        if (globalIndex >= files.size()) {
+            continue;
+        }
+
+        const bool selected =
+            globalIndex == selectedIndex;
+
+        if (selected) {
+            drawRectangleOutline(
+                framebuffer,
+                cellX,
+                cellY,
+                CELL_WIDTH,
+                CELL_HEIGHT,
+                3,
+                58,
+                185,
+                255
+            );
+        } else {
+            drawRectangleOutline(
+                framebuffer,
+                cellX,
+                cellY,
+                CELL_WIDTH,
+                CELL_HEIGHT,
+                1,
+                45,
+                52,
+                66
+            );
+        }
+
+        const std::size_t thumbnailIndex =
+            globalIndex - pageStart;
+
+        if (
+            thumbnailIndex <
+                thumbnails.size() &&
+            thumbnails[
+                thumbnailIndex
+            ].valid()
+        ) {
+            const Image& thumbnail =
+                thumbnails[thumbnailIndex];
+
+            const int imageX =
+                cellX +
+                (
+                    CELL_WIDTH -
+                    thumbnail.width
+                ) /
+                2;
+
+            const int imageY =
+                cellY +
+                (
+                    CELL_HEIGHT -
+                    thumbnail.height
+                ) /
+                2;
+
+            drawImageAt(
+                framebuffer,
+                thumbnail,
+                imageX,
+                imageY
+            );
+        }
+    }
+
+    if (!files.empty()) {
+        const int progressWidth =
+            static_cast<int>(
+                (
+                    static_cast<double>(
+                        selectedIndex + 1
+                    ) /
+                    files.size()
+                ) *
+                TOP_WIDTH
+            );
+
+        fillRectangle(
+            framebuffer,
+            0,
+            TOP_HEIGHT - 3,
+            TOP_WIDTH,
+            3,
+            20,
+            25,
+            34
+        );
+
+        fillRectangle(
+            framebuffer,
+            0,
+            TOP_HEIGHT - 3,
+            progressWidth,
+            3,
+            58,
+            185,
+            255
+        );
+    }
+}
+
+void printGridInformation(
+    const std::vector<std::string>& files,
+    std::size_t selectedIndex,
+    const std::string& status
+) {
     consoleClear();
-    printf("\x1b[1;1HMaGalerie 3DS\n");
-    printf("------------------------------\n");
+
+    printf(
+        "\x1b[1;2H"
+        "\x1b[36mMaGalerie 3DS"
+        "\x1b[0m"
+    );
+
+    printf(
+        "\x1b[3;2H"
+        "GALERIE"
+    );
 
     if (files.empty()) {
-        printf("Aucune photo BMP trouvee.\n\n");
-        printf("Cree ce dossier avec FTPD :\n");
-        printf("/3ds/MaGalerie/photos/\n\n");
-        printf("Puis ajoute des images .bmp\n");
-        printf("en 24 ou 32 bits.\n");
+        printf(
+            "\x1b[5;2H"
+            "Aucune photo BMP trouvee."
+        );
+
+        printf(
+            "\x1b[7;2H"
+            "/3ds/MaGalerie/photos/"
+        );
+
+        printf(
+            "\x1b[10;2H"
+            "X : actualiser"
+        );
     } else {
-        printf("Photo %lu / %lu\n", static_cast<unsigned long>(index + 1),
-               static_cast<unsigned long>(files.size()));
-        printf("%s\n", baseName(files[index]).c_str());
-        printf("Zoom : %.1fx\n", zoom);
-        if (!status.empty()) printf("\n%s\n", status.c_str());
+        printf(
+            "\x1b[5;2H"
+            "Photo %lu sur %lu",
+            static_cast<unsigned long>(
+                selectedIndex + 1
+            ),
+            static_cast<unsigned long>(
+                files.size()
+            )
+        );
+
+        printf(
+            "\x1b[7;2H"
+            "%.34s",
+            baseName(
+                files[selectedIndex]
+            ).c_str()
+        );
+
+        printf(
+            "\x1b[11;2H"
+            "Croix : selectionner"
+        );
+
+        printf(
+            "\x1b[12;2H"
+            "A      : ouvrir"
+        );
+
+        printf(
+            "\x1b[13;2H"
+            "L / R  : changer de page"
+        );
+
+        printf(
+            "\x1b[14;2H"
+            "X      : actualiser"
+        );
     }
 
-    printf("\nGauche/Droite : changer\n");
-    printf("Haut/Bas       : zoom\n");
-    printf("X              : recharger\n");
-    printf("START          : quitter\n");
+    printf(
+        "\x1b[16;2H"
+        "START  : quitter"
+    );
+
+    if (!status.empty()) {
+        printf(
+            "\x1b[19;2H"
+            "\x1b[31m%.34s"
+            "\x1b[0m",
+            status.c_str()
+        );
+    }
 }
+
+void printViewerInformation(
+    const std::vector<std::string>& files,
+    std::size_t selectedIndex,
+    float zoom,
+    const std::string& status
+) {
+    consoleClear();
+
+    printf(
+        "\x1b[1;2H"
+        "\x1b[36mMaGalerie 3DS"
+        "\x1b[0m"
+    );
+
+    printf(
+        "\x1b[3;2H"
+        "APERÇU"
+    );
+
+    if (!files.empty()) {
+        printf(
+            "\x1b[5;2H"
+            "Photo %lu sur %lu",
+            static_cast<unsigned long>(
+                selectedIndex + 1
+            ),
+            static_cast<unsigned long>(
+                files.size()
+            )
+        );
+
+        printf(
+            "\x1b[7;2H"
+            "%.34s",
+            baseName(
+                files[selectedIndex]
+            ).c_str()
+        );
+
+        printf(
+            "\x1b[9;2H"
+            "Zoom : %.2fx",
+            zoom
+        );
+    }
+
+    printf(
+        "\x1b[12;2H"
+        "Gauche / Droite : changer"
+    );
+
+    printf(
+        "\x1b[13;2H"
+        "Haut / Bas      : zoom"
+    );
+
+    printf(
+        "\x1b[14;2H"
+        "B               : galerie"
+    );
+
+    printf(
+        "\x1b[16;2H"
+        "START           : quitter"
+    );
+
+    if (!status.empty()) {
+        printf(
+            "\x1b[19;2H"
+            "\x1b[31m%.34s"
+            "\x1b[0m",
+            status.c_str()
+        );
+    }
 }
+
+bool loadViewerPhoto(
+    const std::vector<std::string>& files,
+    std::size_t selectedIndex,
+    Image& viewerImage,
+    std::string& status
+) {
+    viewerImage = Image{};
+    status.clear();
+
+    if (files.empty()) {
+        return false;
+    }
+
+    return loadBmp(
+        files[selectedIndex],
+        viewerImage,
+        status
+    );
+}
+
+} // namespace
 
 int main() {
     gfxInitDefault();
     consoleInit(GFX_BOTTOM, nullptr);
 
-    std::vector<std::string> files = listPhotos();
-    std::size_t index = 0;
-    Image image;
-    std::string status;
-    float zoom = 1.0f;
-    bool needsLoad = !files.empty();
-    bool needsDraw = true;
+    std::vector<std::string> files =
+        listPhotos();
 
-    printBottom(files, index, status, zoom);
+    std::size_t selectedIndex = 0;
+    std::size_t currentPage = 0;
+
+    std::size_t cachedThumbnailPage =
+        std::numeric_limits<std::size_t>::max();
+
+    std::vector<Image> thumbnails;
+
+    Image viewerImage;
+
+    ScreenMode mode = ScreenMode::Grid;
+
+    float zoom = 1.0f;
+
+    std::string status;
+
+    bool needsThumbnailReload = true;
+    bool needsViewerLoad = false;
+    bool needsRedraw = true;
 
     while (aptMainLoop()) {
         hidScanInput();
-        const u32 down = hidKeysDown();
 
-        if (down & KEY_START) break;
+        const u32 pressed = hidKeysDown();
 
-        if (down & KEY_X) {
+        if (pressed & KEY_START) {
+            break;
+        }
+
+        if (pressed & KEY_X) {
             files = listPhotos();
-            index = 0;
+
+            selectedIndex = 0;
+            currentPage = 0;
+            cachedThumbnailPage =
+                std::numeric_limits<
+                    std::size_t
+                >::max();
+
+            thumbnails.clear();
+            viewerImage = Image{};
             zoom = 1.0f;
             status.clear();
-            image = Image{};
-            needsLoad = !files.empty();
-            needsDraw = true;
+
+            mode = ScreenMode::Grid;
+
+            needsThumbnailReload = true;
+            needsViewerLoad = false;
+            needsRedraw = true;
         }
 
-        if (!files.empty()) {
-            if (down & KEY_RIGHT) {
-                index = (index + 1) % files.size();
+        if (mode == ScreenMode::Grid) {
+            if (!files.empty()) {
+                const std::size_t oldIndex =
+                    selectedIndex;
+
+                if (
+                    pressed & KEY_LEFT &&
+                    selectedIndex %
+                        GRID_COLUMNS >
+                        0
+                ) {
+                    --selectedIndex;
+                }
+
+                if (
+                    pressed & KEY_RIGHT &&
+                    selectedIndex + 1 <
+                        files.size() &&
+                    selectedIndex %
+                        GRID_COLUMNS <
+                        GRID_COLUMNS - 1
+                ) {
+                    ++selectedIndex;
+                }
+
+                if (
+                    pressed & KEY_UP &&
+                    selectedIndex >=
+                        GRID_COLUMNS
+                ) {
+                    selectedIndex -=
+                        GRID_COLUMNS;
+                }
+
+                if (
+                    pressed & KEY_DOWN &&
+                    selectedIndex +
+                        GRID_COLUMNS <
+                        files.size()
+                ) {
+                    selectedIndex +=
+                        GRID_COLUMNS;
+                }
+
+                if (pressed & KEY_L) {
+                    if (
+                        selectedIndex >=
+                        PHOTOS_PER_PAGE
+                    ) {
+                        selectedIndex -=
+                            PHOTOS_PER_PAGE;
+                    } else {
+                        selectedIndex = 0;
+                    }
+                }
+
+                if (pressed & KEY_R) {
+                    selectedIndex = std::min(
+                        selectedIndex +
+                            PHOTOS_PER_PAGE,
+                        files.size() - 1
+                    );
+                }
+
+                if (selectedIndex != oldIndex) {
+                    const std::size_t newPage =
+                        selectedIndex /
+                        PHOTOS_PER_PAGE;
+
+                    if (newPage != currentPage) {
+                        currentPage = newPage;
+                        needsThumbnailReload =
+                            true;
+                    }
+
+                    needsRedraw = true;
+                }
+
+                if (pressed & KEY_A) {
+                    mode = ScreenMode::Viewer;
+                    zoom = 1.0f;
+                    needsViewerLoad = true;
+                    needsRedraw = true;
+                }
+            }
+        } else {
+            if (pressed & KEY_B) {
+                mode = ScreenMode::Grid;
                 zoom = 1.0f;
-                needsLoad = true;
+                needsRedraw = true;
             }
-            if (down & KEY_LEFT) {
-                index = (index + files.size() - 1) % files.size();
-                zoom = 1.0f;
-                needsLoad = true;
-            }
-            if (down & KEY_UP) {
-                zoom = std::min(4.0f, zoom + 0.25f);
-                needsDraw = true;
-            }
-            if (down & KEY_DOWN) {
-                zoom = std::max(0.25f, zoom - 0.25f);
-                needsDraw = true;
+
+            if (!files.empty()) {
+                if (pressed & KEY_RIGHT) {
+                    selectedIndex =
+                        (
+                            selectedIndex + 1
+                        ) %
+                        files.size();
+
+                    zoom = 1.0f;
+                    needsViewerLoad = true;
+                }
+
+                if (pressed & KEY_LEFT) {
+                    selectedIndex =
+                        (
+                            selectedIndex +
+                            files.size() -
+                            1
+                        ) %
+                        files.size();
+
+                    zoom = 1.0f;
+                    needsViewerLoad = true;
+                }
+
+                if (pressed & KEY_UP) {
+                    zoom = std::min(
+                        4.0f,
+                        zoom + 0.25f
+                    );
+
+                    needsRedraw = true;
+                }
+
+                if (pressed & KEY_DOWN) {
+                    zoom = std::max(
+                        0.50f,
+                        zoom - 0.25f
+                    );
+
+                    needsRedraw = true;
+                }
             }
         }
 
-        if (needsLoad) {
-            status.clear();
-            Image loaded;
-            if (loadBmp(files[index], loaded, status)) {
-                image = std::move(loaded);
+        if (
+            mode == ScreenMode::Grid &&
+            needsThumbnailReload
+        ) {
+            buildThumbnailPage(
+                files,
+                currentPage,
+                thumbnails,
+                status
+            );
+
+            cachedThumbnailPage =
+                currentPage;
+
+            (void)cachedThumbnailPage;
+
+            needsThumbnailReload = false;
+            needsRedraw = true;
+        }
+
+        if (
+            mode == ScreenMode::Viewer &&
+            needsViewerLoad
+        ) {
+            loadViewerPhoto(
+                files,
+                selectedIndex,
+                viewerImage,
+                status
+            );
+
+            needsViewerLoad = false;
+            needsRedraw = true;
+        }
+
+        if (needsRedraw) {
+            if (mode == ScreenMode::Grid) {
+                drawGrid(
+                    files,
+                    thumbnails,
+                    selectedIndex,
+                    currentPage
+                );
+
+                printGridInformation(
+                    files,
+                    selectedIndex,
+                    status
+                );
             } else {
-                image = Image{};
-            }
-            needsLoad = false;
-            needsDraw = true;
-        }
+                drawViewerImage(
+                    viewerImage,
+                    zoom
+                );
 
-            if (needsDraw) {
-            drawImage(image, zoom);
-            printBottom(files, index, status, zoom);
+                printViewerInformation(
+                    files,
+                    selectedIndex,
+                    zoom,
+                    status
+                );
+            }
 
             gfxFlushBuffers();
             gfxSwapBuffers();
             gspWaitForVBlank();
 
-            needsDraw = false;
+            needsRedraw = false;
         } else {
-            // Attendre sans changer inutilement de framebuffer.
             gspWaitForVBlank();
         }
     }
 
     gfxExit();
+
     return 0;
 }

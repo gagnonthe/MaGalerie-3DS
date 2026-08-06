@@ -108,6 +108,7 @@ cia: $(OUTPUT).cia
 $(OUTPUT).cia: $(OUTPUT).elf $(OUTPUT).smdh
 	@echo Creation du CIA...
 	@$(MAKEROM) \
+		-exefslogo \
 		-f cia \
 		-target t \
 		-o "$(OUTPUT).cia" \
